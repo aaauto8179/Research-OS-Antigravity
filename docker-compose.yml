@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: research-os-antigravity-postgres
+    environment:
+      POSTGRES_DB: research_os_ag
+      POSTGRES_USER: research
+      POSTGRES_PASSWORD: research_local_dev
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U research -d research_os_ag"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: research-os-antigravity-qdrant
+    ports:
+      - "6334:6333"
+      - "6335:6334"
+    volumes:
+      - ./qdrant/data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: research-os-antigravity-ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - ./ollama/models:/root/.ollama/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  math-engine:
+    build: ./math-engine
+    container_name: research-os-antigravity-math-engine
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=postgresql://research:research_local_dev@postgres:5432/research_os_ag
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  data-ingestion:
+    build: ./data-ingestion
+    container_name: research-os-antigravity-data-ingestion
+    ports:
+      - "8001:8001"
+    environment:
+      - PYTHONPATH=/app/src
+      - DATABASE_URL=postgresql://research:research_local_dev@postgres:5432/research_os_ag
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: research-os-antigravity-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@research-os.local
+      PGADMIN_DEFAULT_PASSWORD: admin_local
+    ports:
+      - "5051:80"
+    depends_on:
+      - postgres
+    volumes:
+      - ./pgadmin:/var/lib/pgadmin
